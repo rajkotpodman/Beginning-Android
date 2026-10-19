@@ -70,7 +70,7 @@ func LoadConfig() (*Config, error) {
 		}
 		return &Config{
 			PairCode: "",
-			RelayURL: "ws://localhost:8080/ws",
+			RelayURL: "wss://relay.beginningandroid.com/ws",
 			PCName:   hostname,
 		}, nil
 	}
@@ -80,7 +80,7 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	if cfg.RelayURL == "" {
-		cfg.RelayURL = "ws://localhost:8080/ws"
+		cfg.RelayURL = "wss://relay.beginningandroid.com/ws"
 	}
 	return &cfg, nil
 }

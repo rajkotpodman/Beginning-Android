@@ -16,8 +16,8 @@ func TestConfigDefaultsAndSaveLoad(t *testing.T) {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.RelayURL != "ws://localhost:8080/ws" {
-		t.Errorf("Expected default RelayURL ws://localhost:8080/ws, got %q", cfg.RelayURL)
+	if cfg.RelayURL != "wss://relay.beginningandroid.com/ws" {
+		t.Errorf("Expected default RelayURL wss://relay.beginningandroid.com/ws, got %q", cfg.RelayURL)
 	}
 	if cfg.PairCode != "" {
 		t.Errorf("Expected empty initial PairCode, got %q", cfg.PairCode)
