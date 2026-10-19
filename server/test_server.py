@@ -54,12 +54,22 @@ async def run_all_tests():
             assert msg_a["payload"] == f"ENCRYPTED_{ftype.upper()}"
         print("[OK] File sharing messages relayed successfully")
 
-        # 6. Test Screenshot Metadata
-        screen_msg = {"type": "screenshot_meta", "payload": "ENCRYPTED_SCREENSHOT_META", "nonce": "nonce_screen"}
+        # 6. Test Screenshot & Voice Stream
+        screen_msg = {"type": "screenshot", "payload": "ENCRYPTED_SCREENSHOT", "nonce": "nonce_screen"}
         await ws_b.send_json(screen_msg)
         msg_a2 = await ws_a.receive_json()
-        assert msg_a2["type"] == "screenshot_meta"
-        print("[OK] Screenshot metadata relayed successfully")
+        assert msg_a2["type"] == "screenshot"
+
+        voice_msg = {"type": "voice_stream", "payload": "ENCRYPTED_VOICE", "nonce": "nonce_voice"}
+        await ws_a.send_json(voice_msg)
+        msg_b_voice = await ws_b.receive_json()
+        assert msg_b_voice["type"] == "voice_stream"
+
+        key_ex_msg = {"type": "key_exchange", "public_key": "TEST_BASE64_PUBKEY"}
+        await ws_a.send_json(key_ex_msg)
+        msg_b_key = await ws_b.receive_json()
+        assert msg_b_key["type"] == "key_exchange"
+        print("[OK] Screenshot, Voice, and Key Exchange messages relayed successfully")
 
         # 7. Test Ping / Pong
         ping_msg = {"type": "ping", "payload": "", "nonce": "nonce_ping"}

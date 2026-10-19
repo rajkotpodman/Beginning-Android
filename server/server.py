@@ -22,13 +22,18 @@ TLS_KEY = os.getenv("TLS_KEY", "")
 STALE_TIMEOUT = int(os.getenv("STALE_TIMEOUT", "300"))  # seconds
 
 VALID_TYPES = {
-    "clipboard",
-    "file_chunk",
-    "file_start",
-    "file_end",
-    "screenshot_meta",
-    "ping",
+    "key_exchange",
     "pair",
+    "clipboard",
+    "voice_stream",
+    "screenshot",
+    "screenshot_meta",
+    "screenshot_start",
+    "file_start",
+    "file_chunk",
+    "file_end",
+    "ping",
+    "pong",
 }
 
 class RoomManager:
