@@ -85,6 +85,7 @@ target/
 Cargo.lock
 
 # Python (relay/tooling)
+.pytest_cache/
 __pycache__/
 *.py[cod]
 *$py.class
