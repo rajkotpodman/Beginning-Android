@@ -1,12 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -132,7 +136,43 @@ func handleCLISend(filePath string) {
 	}
 }
 
+func isAlreadyRunning() bool {
+	c := http.Client{Timeout: 300 * time.Millisecond}
+	resp, err := c.Get("http://127.0.0.1:8080/health")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		var health struct {
+			Service string `json:"service"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&health); err == nil && health.Service == "beginning-android" {
+			return true
+		}
+	}
+	return false
+}
+
+func openBrowser(url string) {
+	switch runtime.GOOS {
+	case "windows":
+		_ = exec.Command("cmd", "/c", "start", "", url).Start()
+	case "linux":
+		_ = exec.Command("xdg-open", url).Start()
+	}
+}
+
 func runTrayApp() {
+	if isAlreadyRunning() {
+		fmt.Println("==============================================================")
+		fmt.Println("[Beginning Android] Application is ALREADY RUNNING in background!")
+		fmt.Println("[Beginning Android] Opening Pairing Dashboard in your browser...")
+		fmt.Println("==============================================================")
+		openBrowser("http://localhost:8080")
+		return
+	}
+
 	log.Println("[Beginning Android] Starting desktop client...")
 
 	cfg, err := config.LoadConfig()
@@ -143,7 +183,7 @@ func runTrayApp() {
 	// 1. Start Embedded WebSocket Relay Server on port 8080
 	relayServer := relay.NewServer(8080, cfg.PCName, cfg.PairCode, "beginning-android-release.apk")
 	if err := relayServer.Start(); err != nil {
-		log.Printf("[Relay] Warning: Could not start embedded relay server (may already be running): %v", err)
+		log.Printf("[Relay] Note: Using existing local relay server: %v", err)
 	} else {
 		log.Println("[Relay] Embedded WebSocket Relay Server started successfully.")
 	}

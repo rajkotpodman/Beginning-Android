@@ -12,9 +12,9 @@ if (-not (Test-Path $DistDir)) {
 
 # 1. Prepare Portable Directory
 Write-Host "Creating Portable directory..." -ForegroundColor Cyan
-$PortableDir = Join-Path $DistDir "BeginningAndroid-Windows-Portable"
+$PortableDir = Join-Path $DistDir "BeginningAndroid-Windows-Portable-Staging"
 if (Test-Path $PortableDir) {
-    Remove-Item -Path $PortableDir -Recurse -Force
+    Remove-Item -Path $PortableDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 New-Item -ItemType Directory -Path $PortableDir -Force | Out-Null
 
@@ -85,6 +85,7 @@ Write-Host "Creating Portable ZIP archive..." -ForegroundColor Cyan
 $PortableZip = Join-Path $DistDir "BeginningAndroid-Windows-Portable.zip"
 if (Test-Path $PortableZip) { Remove-Item $PortableZip -Force }
 Compress-Archive -Path "$PortableDir\*" -DestinationPath $PortableZip -Force
+Remove-Item -Path $PortableDir -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "[OK] Created: $PortableZip" -ForegroundColor Green
 
 # 2. Create Complete Source ZIP Archive

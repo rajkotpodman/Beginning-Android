@@ -8,6 +8,8 @@ Write-Host ""
 
 # 1. Terminate any running instance
 Write-Host "[1/8] Checking for running instances..." -ForegroundColor Yellow
+taskkill.exe /F /IM "beginning-android.exe" 2>$null | Out-Null
+taskkill.exe /F /IM "beginning-android-windows-amd64.exe" 2>$null | Out-Null
 Stop-Process -Name "beginning-android*" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
