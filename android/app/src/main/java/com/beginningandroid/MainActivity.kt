@@ -15,6 +15,7 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
 import java.util.*
@@ -36,6 +37,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var badgeStatus: TextView
     private lateinit var etPairCode: EditText
     private lateinit var etServerUrl: EditText
+    private lateinit var btnAutoDetect: Button
+    private lateinit var tvDiscoveryStatus: TextView
     private lateinit var btnGenerateCode: Button
     private lateinit var btnConnect: Button
 
@@ -46,6 +49,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvVoiceTranscription: TextView
     private lateinit var btnVoiceTyping: Button
     private lateinit var btnDisconnect: Button
+
+    private val discoveryManager by lazy { DiscoveryManager(this) }
+    private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
@@ -125,6 +131,8 @@ class MainActivity : AppCompatActivity() {
 
         etPairCode = findViewById(R.id.etPairCode)
         etServerUrl = findViewById(R.id.etServerUrl)
+        btnAutoDetect = findViewById(R.id.btnAutoDetect)
+        tvDiscoveryStatus = findViewById(R.id.tvDiscoveryStatus)
         btnGenerateCode = findViewById(R.id.btnGenerateCode)
         btnConnect = findViewById(R.id.btnConnect)
 
@@ -135,6 +143,10 @@ class MainActivity : AppCompatActivity() {
         tvVoiceTranscription = findViewById(R.id.tvVoiceTranscription)
         btnVoiceTyping = findViewById(R.id.btnVoiceTyping)
         btnDisconnect = findViewById(R.id.btnDisconnect)
+
+        btnAutoDetect.setOnClickListener {
+            triggerAutoDiscovery()
+        }
 
         btnGenerateCode.setOnClickListener {
             val code = generateRandomPairCode()
@@ -187,6 +199,27 @@ class MainActivity : AppCompatActivity() {
         screenMain.visibility = View.GONE
         badgeStatus.text = getString(R.string.status_disconnected)
         badgeStatus.setBackgroundColor(0xFF334155.toInt())
+        triggerAutoDiscovery()
+    }
+
+    private fun triggerAutoDiscovery() {
+        tvDiscoveryStatus.text = "🔍 Searching for PC on mobile hotspot / Wi-Fi..."
+        tvDiscoveryStatus.setTextColor(0xFF38BDF8.toInt())
+        coroutineScope.launch {
+            val pc = discoveryManager.discoverPC(2500)
+            if (pc != null) {
+                tvDiscoveryStatus.text = "✅ Found PC: ${pc.pcName} (${pc.ip})"
+                tvDiscoveryStatus.setTextColor(0xFF10B981.toInt())
+                etServerUrl.setText(pc.wsUrl)
+                if (pc.pairCode.isNotBlank() && etPairCode.text.isBlank()) {
+                    etPairCode.setText(pc.pairCode)
+                }
+                Toast.makeText(this@MainActivity, "Connected to ${pc.pcName}!", Toast.LENGTH_SHORT).show()
+            } else {
+                tvDiscoveryStatus.text = "Hotspot connected. Tap Auto-Detect when PC client is open."
+                tvDiscoveryStatus.setTextColor(0xFF94A3B8.toInt())
+            }
+        }
     }
 
     private fun showMainScreen(pairCode: String) {
@@ -457,6 +490,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        coroutineScope.cancel()
         stopListening()
     }
 }

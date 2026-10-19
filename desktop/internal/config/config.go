@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -70,17 +71,19 @@ func LoadConfig() (*Config, error) {
 		}
 		return &Config{
 			PairCode: "",
-			RelayURL: "wss://relay.beginningandroid.com/ws",
+			RelayURL: "ws://localhost:8080/ws",
 			PCName:   hostname,
 		}, nil
 	}
+
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
-	if cfg.RelayURL == "" {
-		cfg.RelayURL = "wss://relay.beginningandroid.com/ws"
+	if cfg.RelayURL == "" || cfg.RelayURL == "wss://relay.beginningandroid.com/ws" {
+		cfg.RelayURL = "ws://localhost:8080/ws"
 	}
 	return &cfg, nil
 }

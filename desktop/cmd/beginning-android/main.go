@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/rajkotpodman/beginning-android/desktop/internal/clipboard"
 	"github.com/rajkotpodman/beginning-android/desktop/internal/config"
 	"github.com/rajkotpodman/beginning-android/desktop/internal/network"
+	"github.com/rajkotpodman/beginning-android/desktop/internal/relay"
 	"github.com/rajkotpodman/beginning-android/desktop/internal/tray"
 )
 
@@ -137,6 +140,14 @@ func runTrayApp() {
 		log.Fatalf("Failed to initialize config: %v", err)
 	}
 
+	// 1. Start Embedded WebSocket Relay Server on port 8080
+	relayServer := relay.NewServer(8080, cfg.PCName, cfg.PairCode, "beginning-android-release.apk")
+	if err := relayServer.Start(); err != nil {
+		log.Printf("[Relay] Warning: Could not start embedded relay server (may already be running): %v", err)
+	} else {
+		log.Println("[Relay] Embedded WebSocket Relay Server started successfully.")
+	}
+
 	client := network.NewClient(cfg)
 
 	// Start 300ms Clipboard Watcher
@@ -149,6 +160,25 @@ func runTrayApp() {
 	client.Start()
 
 	// Launch System Tray UI
-	app := tray.NewTrayApp(cfg, client)
+	app := tray.NewTrayApp(cfg, client, relayServer)
+
+	// Trap OS termination signals (Ctrl+C, SIGTERM)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		log.Println("[Beginning Android] Received shutdown signal. Exiting gracefully...")
+		client.Stop()
+		if relayServer != nil {
+			relayServer.Stop()
+		}
+		os.Exit(0)
+	}()
+
 	app.Run()
+
+	// If systray exits (e.g. headless/non-interactive), stay alive continuously
+	log.Println("[Beginning Android] Background sync and relay server running live.")
+	select {}
 }

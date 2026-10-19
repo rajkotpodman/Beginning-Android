@@ -20,5 +20,5 @@
     <string name="toast_clipboard_copied">Copied to clipboard!</string>
     <string name="toast_file_sending">Sending file to PC...</string>
     <string name="toast_file_received">File received: %1$s</string>
-    <string name="default_relay_url">wss://relay.beginningandroid.com/ws</string>
+    <string name="default_relay_url">ws://10.250.119.105:8080/ws</string>
 </resources>

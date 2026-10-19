@@ -115,13 +115,34 @@
                     android:textSize="13sp" />
 
                 <Button
+                    android:id="@+id/btnAutoDetect"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:layout_marginTop="20dp"
+                    android:text="🔍 Auto-Detect PC on Hotspot/Wi-Fi"
+                    android:textAllCaps="false"
+                    android:textStyle="bold"
+                    android:textColor="#38BDF8"
+                    android:backgroundTint="#1E293B" />
+
+                <TextView
+                    android:id="@+id/tvDiscoveryStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Tap Auto-Detect to find your PC instantly."
+                    android:textColor="#94A3B8"
+                    android:textSize="12sp"
+                    android:gravity="center_horizontal" />
+
+                <Button
                     android:id="@+id/btnGenerateCode"
                     android:layout_width="match_parent"
                     android:layout_height="50dp"
-                    android:layout_marginTop="24dp"
+                    android:layout_marginTop="12dp"
                     android:text="@string/btn_generate"
                     android:textAllCaps="false"
-                    android:textColor="#38BDF8"
+                    android:textColor="#94A3B8"
                     android:backgroundTint="#1E293B" />
 
                 <Button
