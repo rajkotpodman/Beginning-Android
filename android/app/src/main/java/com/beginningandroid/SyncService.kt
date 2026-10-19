@@ -207,7 +207,7 @@ class SyncService : Service(), RelayClient.Listener {
                             val file = File(path)
                             if (file.exists() && file.length() > 0) {
                                 Log.i(tag, "Auto-detected new screenshot: $path, uploading to PC...")
-                                relayClient?.sendFile(file)
+                                relayClient?.sendScreenshot(file)
                             }
                         }
                     }

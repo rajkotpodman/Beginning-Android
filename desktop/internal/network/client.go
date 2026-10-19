@@ -195,7 +195,7 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 			clipboard.SetText(text)
 		}
 
-	case "file_start", "screenshot_meta":
+	case "screenshot", "screenshot_meta", "screenshot_start", "file_start":
 		decrypted, err := crypto.DecryptString(c.aesKey, env.Payload, env.Nonce)
 		if err != nil {
 			return
@@ -203,12 +203,14 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 		var meta struct {
 			Name string `json:"name"`
 			Size int64  `json:"size"`
+			Type string `json:"type"`
 		}
 		if json.Unmarshal([]byte(decrypted), &meta) != nil {
 			return
 		}
 
-		c.setupIncomingFile(meta.Name, env.Type == "screenshot_meta")
+		isScreenshot := env.Type == "screenshot" || env.Type == "screenshot_meta" || env.Type == "screenshot_start" || meta.Type == "screenshot"
+		c.setupIncomingFile(meta.Name, isScreenshot)
 
 	case "file_chunk":
 		chunk, err := crypto.Decrypt(c.aesKey, env.Payload, env.Nonce)
@@ -246,7 +248,11 @@ func (c *Client) setupIncomingFile(name string, isScreenshot bool) {
 
 	cleanName := filepath.Base(name)
 	if cleanName == "" || cleanName == "." {
-		cleanName = fmt.Sprintf("file_%d", time.Now().Unix())
+		if isScreenshot {
+			cleanName = fmt.Sprintf("screenshot_%d.png", time.Now().Unix())
+		} else {
+			cleanName = fmt.Sprintf("file_%d", time.Now().Unix())
+		}
 	}
 
 	destPath := filepath.Join(targetDir, cleanName)
@@ -256,7 +262,11 @@ func (c *Client) setupIncomingFile(name string, isScreenshot bool) {
 		return
 	}
 	c.currentFile = f
-	log.Printf("[File] Receiving incoming file to: %s", destPath)
+	if isScreenshot {
+		log.Printf("[Screenshot] Receiving incoming screenshot to: %s", destPath)
+	} else {
+		log.Printf("[File] Receiving incoming file to: %s", destPath)
+	}
 }
 
 func (c *Client) sendPairAnnouncement() {

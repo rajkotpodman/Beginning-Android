@@ -165,14 +165,26 @@ class RelayClient(
     }
 
     fun sendFile(file: File) {
+        streamFile(file, isScreenshot = false)
+    }
+
+    fun sendScreenshot(file: File) {
+        streamFile(file, isScreenshot = true)
+    }
+
+    private fun streamFile(file: File, isScreenshot: Boolean) {
         scope.launch {
             try {
                 // 1. File start meta
+                val msgType = if (isScreenshot) "screenshot" else "file_start"
                 val metaObj = JSONObject().apply {
                     put("name", file.name)
                     put("size", file.length())
+                    if (isScreenshot) {
+                        put("type", "screenshot")
+                    }
                 }
-                sendEncrypted("file_start", metaObj.toString().toByteArray())
+                sendEncrypted(msgType, metaObj.toString().toByteArray())
 
                 // 2. File chunks (64 KB chunk size for fast streaming)
                 val buffer = ByteArray(64 * 1024)
@@ -187,6 +199,7 @@ class RelayClient(
 
                 // 3. File end
                 sendEncrypted("file_end", ByteArray(0))
+                Log.i(tag, "Finished streaming ${if (isScreenshot) "screenshot" else "file"}: ${file.name}")
             } catch (e: Exception) {
                 Log.e(tag, "Failed to stream file", e)
             }
