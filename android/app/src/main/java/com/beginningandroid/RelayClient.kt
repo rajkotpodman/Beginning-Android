@@ -7,8 +7,9 @@ import okhttp3.*
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.util.Base64
 import java.util.concurrent.TimeUnit
-import javax.crypto.spec.SecretKeySpec
+import java.util.concurrent.atomic.AtomicLong
 
 class RelayClient(
     private val relayUrl: String,
@@ -29,7 +30,15 @@ class RelayClient(
         .pingInterval(25, TimeUnit.SECONDS)
         .build()
 
-    private val aesKey: SecretKeySpec = Crypto.deriveKey(pairCode)
+    private val pairCodeHash: ByteArray = Crypto.pairCodeHash(pairCode)
+    private val pairSeed: ByteArray = Crypto.derivePairSeed(pairCode)
+    private val x25519KeyPair: Pair<ByteArray, ByteArray> = Crypto.generateX25519KeyPair()
+
+    @Volatile
+    private var sessionKey: ByteArray? = null
+    private val outgoingSeq = AtomicLong(1L)
+    private var lastIncomingSeq = 0L
+
     private var webSocket: WebSocket? = null
     private var isRunning = false
     private var retryDelayMs = 1000L
@@ -53,6 +62,10 @@ class RelayClient(
         closeCurrentFile()
     }
 
+    private fun getActiveKey(): ByteArray {
+        return sessionKey ?: pairSeed
+    }
+
     private fun connect() {
         if (!isRunning) return
         listener.onStatusChanged("Connecting...")
@@ -65,25 +78,25 @@ class RelayClient(
             .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(ws: WebSocket, response: Response) {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(tag, "Connected to relay room: $pairCode")
                 retryDelayMs = 1000L
                 listener.onStatusChanged("Connected")
 
-                // Send pair announcement with device model
-                sendPairAnnouncement()
+                // Step 1: Send X25519 Public Key Exchange Announcement
+                sendKeyExchange()
             }
 
-            override fun onMessage(ws: WebSocket, text: String) {
+            override fun onMessage(webSocket: WebSocket, text: String) {
                 handleIncomingMessage(text)
             }
 
-            override fun onClosing(ws: WebSocket, code: Int, reason: String) {
-                ws.close(1000, null)
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
                 handleDisconnect()
             }
 
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.w(tag, "WebSocket failure: ${t.message}")
                 handleDisconnect()
             }
@@ -92,6 +105,7 @@ class RelayClient(
 
     private fun handleDisconnect() {
         listener.onStatusChanged("Disconnected")
+        sessionKey = null
         if (isRunning) {
             scope.launch {
                 delay(retryDelayMs)
@@ -106,32 +120,58 @@ class RelayClient(
         try {
             val json = JSONObject(rawJson)
             val type = json.optString("type")
+
+            // 1. Handle Key Exchange (unencrypted envelope carrying public key)
+            if (type == "key_exchange") {
+                val peerPubBase64 = json.optString("public_key")
+                if (peerPubBase64.isNotBlank()) {
+                    val peerPub = Base64.getDecoder().decode(peerPubBase64)
+                    val sharedSecret = Crypto.computeSharedSecret(x25519KeyPair.first, peerPub)
+                    sessionKey = Crypto.deriveSessionKey(sharedSecret, pairCodeHash)
+                    val peerName = json.optString("device_name", "Connected PC")
+                    Log.i(tag, "E2EE Session Established via X25519 + HKDF-SHA256 with $peerName")
+                    listener.onPeerConnected(peerName)
+                }
+                return
+            }
+
+            // 2. Replay Protection: Check sequential message counter
+            val seq = json.optLong("seq", 0L)
+            if (seq > 0L && seq <= lastIncomingSeq) {
+                Log.w(tag, "Rejected replayed message with seq $seq <= $lastIncomingSeq")
+                return
+            }
+            if (seq > lastIncomingSeq) {
+                lastIncomingSeq = seq
+            }
+
             val payload = json.optString("payload")
             val nonce = json.optString("nonce")
+            val activeKey = getActiveKey()
 
             when (type) {
                 "pair" -> {
-                    val decrypted = Crypto.decryptString(aesKey, payload, nonce)
+                    val decrypted = Crypto.decryptString(activeKey, payload, nonce)
                     val info = JSONObject(decrypted)
                     val peerName = info.optString("device_name", "Connected PC")
                     listener.onPeerConnected(peerName)
                 }
                 "clipboard" -> {
-                    val text = Crypto.decryptString(aesKey, payload, nonce)
+                    val text = Crypto.decryptString(activeKey, payload, nonce)
                     listener.onClipboardReceived(text)
                 }
                 "voice_stream" -> {
-                    val spokenText = Crypto.decryptString(aesKey, payload, nonce)
+                    val spokenText = Crypto.decryptString(activeKey, payload, nonce)
                     listener.onVoiceStreamReceived(spokenText)
                 }
-                "file_start" -> {
-                    val decrypted = Crypto.decryptString(aesKey, payload, nonce)
+                "file_start", "screenshot" -> {
+                    val decrypted = Crypto.decryptString(activeKey, payload, nonce)
                     val meta = JSONObject(decrypted)
                     val fileName = meta.optString("name", "received_file")
                     setupIncomingFile(fileName)
                 }
                 "file_chunk" -> {
-                    val chunkBytes = Crypto.decrypt(aesKey, payload, nonce)
+                    val chunkBytes = Crypto.decrypt(activeKey, payload, nonce)
                     currentFileOutputStream?.write(chunkBytes)
                 }
                 "file_end" -> {
@@ -140,7 +180,7 @@ class RelayClient(
                     }
                 }
                 "ping" -> {
-                    sendRaw("pong", "", "")
+                    sendRaw("pong", 0L, "", "")
                 }
             }
         } catch (e: Exception) {
@@ -148,12 +188,15 @@ class RelayClient(
         }
     }
 
-    private fun sendPairAnnouncement() {
-        val payloadObj = JSONObject().apply {
+    private fun sendKeyExchange() {
+        val pubBase64 = Base64.getEncoder().encodeToString(x25519KeyPair.second)
+        val json = JSONObject().apply {
+            put("type", "key_exchange")
+            put("public_key", pubBase64)
             put("device_name", "${Build.MANUFACTURER} ${Build.MODEL}")
             put("platform", "android")
         }
-        sendEncrypted("pair", payloadObj.toString().toByteArray())
+        webSocket?.send(json.toString())
     }
 
     fun sendClipboard(text: String) {
@@ -186,13 +229,14 @@ class RelayClient(
                 }
                 sendEncrypted(msgType, metaObj.toString().toByteArray())
 
-                // 2. File chunks (64 KB chunk size for fast streaming)
+                // 2. File chunks: 64 KB each, encrypted separately, sequential counter
                 val buffer = ByteArray(64 * 1024)
                 file.inputStream().use { input ->
                     var bytesRead: Int
+                    var chunkIndex = 0
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         val chunk = if (bytesRead == buffer.size) buffer else buffer.copyOf(bytesRead)
-                        sendEncrypted("file_chunk", chunk)
+                        sendEncryptedChunk(chunk, chunkIndex++)
                         delay(10) // Prevents socket buffer starvation
                     }
                 }
@@ -208,16 +252,37 @@ class RelayClient(
 
     private fun sendEncrypted(type: String, dataBytes: ByteArray) {
         try {
-            val (payloadBase64, nonceBase64) = Crypto.encrypt(aesKey, dataBytes)
-            sendRaw(type, payloadBase64, nonceBase64)
+            val seq = outgoingSeq.getAndIncrement()
+            val (payloadBase64, nonceBase64) = Crypto.encrypt(getActiveKey(), dataBytes)
+            sendRaw(type, seq, payloadBase64, nonceBase64)
         } catch (e: Exception) {
             Log.e(tag, "Encryption failed for $type", e)
         }
     }
 
-    private fun sendRaw(type: String, payload: String, nonce: String) {
+    private fun sendEncryptedChunk(chunkBytes: ByteArray, chunkIndex: Int) {
+        try {
+            val seq = outgoingSeq.getAndIncrement()
+            val (payloadBase64, nonceBase64) = Crypto.encrypt(getActiveKey(), chunkBytes)
+            val json = JSONObject().apply {
+                put("type", "file_chunk")
+                put("seq", seq)
+                put("chunk_index", chunkIndex)
+                put("payload", payloadBase64)
+                put("nonce", nonceBase64)
+            }
+            webSocket?.send(json.toString())
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to send chunk $chunkIndex", e)
+        }
+    }
+
+    private fun sendRaw(type: String, seq: Long, payload: String, nonce: String) {
         val json = JSONObject().apply {
             put("type", type)
+            if (seq > 0) {
+                put("seq", seq)
+            }
             put("payload", payload)
             put("nonce", nonce)
         }

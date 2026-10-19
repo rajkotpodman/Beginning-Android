@@ -51,6 +51,22 @@ class SyncService : Service(), RelayClient.Listener {
         fun getService(): SyncService = this@SyncService
     }
 
+    fun sendClipboard(text: String) {
+        relayClient?.sendClipboard(text)
+    }
+
+    fun sendFile(file: File) {
+        relayClient?.sendFile(file)
+    }
+
+    fun sendScreenshot(file: File) {
+        relayClient?.sendScreenshot(file)
+    }
+
+    fun sendVoiceStream(text: String) {
+        relayClient?.sendVoiceStream(text)
+    }
+
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onCreate() {
@@ -241,14 +257,6 @@ class SyncService : Service(), RelayClient.Listener {
 
     override fun onVoiceStreamReceived(text: String) {
         broadcastToUi(BROADCAST_VOICE, text)
-    }
-
-    fun sendVoiceStream(text: String) {
-        relayClient?.sendVoiceStream(text)
-    }
-
-    fun sendFile(file: File) {
-        relayClient?.sendFile(file)
     }
 
     private fun broadcastToUi(action: String, data: String) {

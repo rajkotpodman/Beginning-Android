@@ -286,25 +286,77 @@ class MainActivity : AppCompatActivity() {
         btnVoiceTyping.text = getString(R.string.btn_voice_typing)
     }
 
-    // --- Share Intent Handling ---
+    // --- Native Share Intent Handling ---
     private fun handleShareIntent(intent: Intent) {
         val action = intent.action
         val type = intent.type
 
-        if ((Intent.ACTION_SEND == action || Intent.ACTION_SEND_MULTIPLE == action) && type != null) {
-            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        if (Intent.ACTION_SEND == action) {
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+
             if (uri != null) {
-                Toast.makeText(this, R.string.toast_file_sending, Toast.LENGTH_SHORT).show()
-                copyUriToFileAndSend(uri)
+                val fileName = getFileNameFromUri(uri)
+                Toast.makeText(this, "Sending $fileName to connected PC...", Toast.LENGTH_SHORT).show()
+                copyUriToFileAndSend(uri, fileName)
+            } else {
+                val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                if (!text.isNullOrBlank()) {
+                    syncService?.sendClipboard(text)
+                    Toast.makeText(this, "Text synced to PC clipboard!", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else if (Intent.ACTION_SEND_MULTIPLE == action) {
+            val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+            }
+
+            if (!uris.isNullOrEmpty()) {
+                Toast.makeText(this, "Sending ${uris.size} files to connected PC...", Toast.LENGTH_SHORT).show()
+                for (uri in uris) {
+                    val fileName = getFileNameFromUri(uri)
+                    copyUriToFileAndSend(uri, fileName)
+                }
             }
         }
     }
 
-    private fun copyUriToFileAndSend(uri: Uri) {
+    private fun getFileNameFromUri(uri: Uri): String {
+        var name = "shared_file_${System.currentTimeMillis()}"
+        if (uri.scheme == "content") {
+            try {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1 && cursor.moveToFirst()) {
+                        val found = cursor.getString(nameIndex)
+                        if (!found.isNullOrBlank()) {
+                            name = found
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        } else if (uri.scheme == "file") {
+            uri.path?.let { p ->
+                val fName = File(p).name
+                if (fName.isNotBlank()) name = fName
+            }
+        }
+        return name
+    }
+
+    private fun copyUriToFileAndSend(uri: Uri, fileName: String) {
         Thread {
             try {
-                val name = "shared_file_${System.currentTimeMillis()}"
-                val tempFile = File(cacheDir, name)
+                val tempFile = File(cacheDir, fileName)
                 contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(tempFile).use { output ->
                         input.copyTo(output)

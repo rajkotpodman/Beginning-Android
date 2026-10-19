@@ -1,6 +1,8 @@
 package network
 
 import (
+	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -19,19 +22,30 @@ import (
 )
 
 type Envelope struct {
-	Type    string `json:"type"`
-	Payload string `json:"payload"`
-	Nonce   string `json:"nonce"`
+	Type       string `json:"type"`
+	Seq        uint64 `json:"seq,omitempty"`
+	ChunkIndex int    `json:"chunk_index,omitempty"`
+	PublicKey  string `json:"public_key,omitempty"`
+	DeviceName string `json:"device_name,omitempty"`
+	Platform   string `json:"platform,omitempty"`
+	Payload    string `json:"payload,omitempty"`
+	Nonce      string `json:"nonce,omitempty"`
 }
 
 type Client struct {
-	cfg       *config.Config
-	aesKey    []byte
-	conn      *websocket.Conn
-	mu        sync.Mutex
-	isRunning bool
+	cfg          *config.Config
+	pairCodeHash []byte
+	pairSeed     []byte
+	x25519Priv   *ecdh.PrivateKey
+	x25519Pub    []byte
 
-	// File receiving state
+	sessionKey      []byte
+	outgoingSeq     uint64
+	lastIncomingSeq uint64
+
+	conn        *websocket.Conn
+	mu          sync.Mutex
+	isRunning   bool
 	currentFile *os.File
 
 	OnStatusChange func(status string)
@@ -39,16 +53,40 @@ type Client struct {
 }
 
 func NewClient(cfg *config.Config) *Client {
-	return &Client{
-		cfg:    cfg,
-		aesKey: crypto.DeriveKey(cfg.PairCode),
+	pairCodeHash := crypto.PairCodeHash(cfg.PairCode)
+	pairSeed := crypto.DerivePairSeed(cfg.PairCode)
+	priv, pub, err := crypto.GenerateX25519KeyPair()
+	if err != nil {
+		log.Printf("[Crypto] Error generating X25519 keypair: %v", err)
 	}
+
+	return &Client{
+		cfg:          cfg,
+		pairCodeHash: pairCodeHash,
+		pairSeed:     pairSeed,
+		x25519Priv:   priv,
+		x25519Pub:    pub,
+	}
+}
+
+func (c *Client) getActiveKey() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.sessionKey) > 0 {
+		return c.sessionKey
+	}
+	return c.pairSeed
 }
 
 func (c *Client) UpdatePairCode(pairCode string) {
 	c.mu.Lock()
 	c.cfg.PairCode = pairCode
-	c.aesKey = crypto.DeriveKey(pairCode)
+	c.pairCodeHash = crypto.PairCodeHash(pairCode)
+	c.pairSeed = crypto.DerivePairSeed(pairCode)
+	c.sessionKey = nil
+	priv, pub, _ := crypto.GenerateX25519KeyPair()
+	c.x25519Priv = priv
+	c.x25519Pub = pub
 	conn := c.conn
 	c.mu.Unlock()
 
@@ -127,17 +165,21 @@ func (c *Client) connectLoop() {
 		retryDelay = 1 * time.Second
 		c.mu.Lock()
 		c.conn = conn
+		c.sessionKey = nil
+		c.lastIncomingSeq = 0
 		c.mu.Unlock()
 
 		if c.OnStatusChange != nil {
 			c.OnStatusChange("Connected")
 		}
 
-		c.sendPairAnnouncement()
+		// Step 1: Send X25519 Public Key Exchange Announcement
+		c.sendKeyExchange()
 		c.readLoop(conn)
 
 		c.mu.Lock()
 		c.conn = nil
+		c.sessionKey = nil
 		if c.currentFile != nil {
 			c.currentFile.Close()
 			c.currentFile = nil
@@ -168,9 +210,47 @@ func (c *Client) readLoop(conn *websocket.Conn) {
 }
 
 func (c *Client) handleIncomingEnvelope(env *Envelope) {
+	// 1. Key Exchange
+	if env.Type == "key_exchange" {
+		if env.PublicKey != "" {
+			peerPub, err := base64.StdEncoding.DecodeString(env.PublicKey)
+			if err == nil {
+				c.mu.Lock()
+				sharedSecret, err := crypto.ComputeSharedSecret(c.x25519Priv, peerPub)
+				if err == nil {
+					sessionKey, err := crypto.DeriveSessionKey(sharedSecret, c.pairCodeHash)
+					if err == nil {
+						c.sessionKey = sessionKey
+						log.Printf("[Crypto] E2EE Session Key Established with peer: %s (%s)", env.DeviceName, env.Platform)
+					}
+				}
+				c.mu.Unlock()
+
+				if env.DeviceName != "" && c.OnPeerConnect != nil {
+					c.OnPeerConnect(env.DeviceName)
+				}
+			}
+		}
+		return
+	}
+
+	// 2. Replay Protection: Check sequential message counter
+	if env.Seq > 0 {
+		c.mu.Lock()
+		if env.Seq <= c.lastIncomingSeq {
+			c.mu.Unlock()
+			log.Printf("[Crypto] Warning: Dropping replayed packet with seq=%d <= last=%d", env.Seq, c.lastIncomingSeq)
+			return
+		}
+		c.lastIncomingSeq = env.Seq
+		c.mu.Unlock()
+	}
+
+	key := c.getActiveKey()
+
 	switch env.Type {
 	case "pair":
-		decrypted, err := crypto.DecryptString(c.aesKey, env.Payload, env.Nonce)
+		decrypted, err := crypto.DecryptString(key, env.Payload, env.Nonce)
 		if err == nil {
 			var meta map[string]interface{}
 			if json.Unmarshal([]byte(decrypted), &meta) == nil {
@@ -182,21 +262,21 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 		}
 
 	case "clipboard":
-		text, err := crypto.DecryptString(c.aesKey, env.Payload, env.Nonce)
+		text, err := crypto.DecryptString(key, env.Payload, env.Nonce)
 		if err == nil && text != "" {
 			log.Printf("[Clipboard] Received live text (%d chars)", len(text))
 			clipboard.SetText(text)
 		}
 
 	case "voice_stream":
-		text, err := crypto.DecryptString(c.aesKey, env.Payload, env.Nonce)
+		text, err := crypto.DecryptString(key, env.Payload, env.Nonce)
 		if err == nil && text != "" {
 			log.Printf("[Voice] Live speech transcription: %s", text)
 			clipboard.SetText(text)
 		}
 
 	case "screenshot", "screenshot_meta", "screenshot_start", "file_start":
-		decrypted, err := crypto.DecryptString(c.aesKey, env.Payload, env.Nonce)
+		decrypted, err := crypto.DecryptString(key, env.Payload, env.Nonce)
 		if err != nil {
 			return
 		}
@@ -213,7 +293,7 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 		c.setupIncomingFile(meta.Name, isScreenshot)
 
 	case "file_chunk":
-		chunk, err := crypto.Decrypt(c.aesKey, env.Payload, env.Nonce)
+		chunk, err := crypto.Decrypt(key, env.Payload, env.Nonce)
 		if err != nil || c.currentFile == nil {
 			return
 		}
@@ -228,7 +308,7 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 		}
 
 	case "ping":
-		c.sendRaw("pong", "", "")
+		c.sendRaw("pong", 0, "", "")
 	}
 }
 
@@ -269,13 +349,20 @@ func (c *Client) setupIncomingFile(name string, isScreenshot bool) {
 	}
 }
 
-func (c *Client) sendPairAnnouncement() {
-	payload := map[string]interface{}{
-		"device_name": c.cfg.PCName,
-		"platform":    runtime.GOOS,
+func (c *Client) sendKeyExchange() {
+	env := Envelope{
+		Type:       "key_exchange",
+		PublicKey:  base64.StdEncoding.EncodeToString(c.x25519Pub),
+		DeviceName: c.cfg.PCName,
+		Platform:   runtime.GOOS,
 	}
-	data, _ := json.Marshal(payload)
-	c.SendEncrypted("pair", data)
+	data, _ := json.Marshal(env)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != nil {
+		c.conn.WriteMessage(websocket.TextMessage, data)
+	}
 }
 
 func (c *Client) SendClipboard(text string) error {
@@ -304,14 +391,31 @@ func (c *Client) SendFile(filePath string) error {
 		return err
 	}
 
-	// 2. Stream chunks (64 KB)
+	// 2. Stream 64KB chunks: encrypted separately, sequential counter
 	buf := make([]byte, 64*1024)
+	chunkIdx := 0
 	for {
 		n, err := file.Read(buf)
 		if n > 0 {
-			if err := c.SendEncrypted("file_chunk", buf[:n]); err != nil {
-				return err
+			seq := atomic.AddUint64(&c.outgoingSeq, 1)
+			payload, nonce, encErr := crypto.Encrypt(c.getActiveKey(), buf[:n])
+			if encErr != nil {
+				return encErr
 			}
+			env := Envelope{
+				Type:       "file_chunk",
+				Seq:        seq,
+				ChunkIndex: chunkIdx,
+				Payload:    payload,
+				Nonce:      nonce,
+			}
+			chunkIdx++
+			data, _ := json.Marshal(env)
+			c.mu.Lock()
+			if c.conn != nil {
+				c.conn.WriteMessage(websocket.TextMessage, data)
+			}
+			c.mu.Unlock()
 			time.Sleep(5 * time.Millisecond)
 		}
 		if err == io.EOF {
@@ -327,14 +431,16 @@ func (c *Client) SendFile(filePath string) error {
 }
 
 func (c *Client) SendEncrypted(msgType string, data []byte) error {
-	payload, nonce, err := crypto.Encrypt(c.aesKey, data)
+	key := c.getActiveKey()
+	seq := atomic.AddUint64(&c.outgoingSeq, 1)
+	payload, nonce, err := crypto.Encrypt(key, data)
 	if err != nil {
 		return err
 	}
-	return c.sendRaw(msgType, payload, nonce)
+	return c.sendRaw(msgType, seq, payload, nonce)
 }
 
-func (c *Client) sendRaw(msgType string, payload string, nonce string) error {
+func (c *Client) sendRaw(msgType string, seq uint64, payload string, nonce string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -344,6 +450,7 @@ func (c *Client) sendRaw(msgType string, payload string, nonce string) error {
 
 	env := Envelope{
 		Type:    msgType,
+		Seq:     seq,
 		Payload: payload,
 		Nonce:   nonce,
 	}
