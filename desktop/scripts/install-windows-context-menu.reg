@@ -1,0 +1,9 @@
+Windows Registry Editor Version 5.00
+
+; Context Menu entry for "Send to Beginning Android"
+[HKEY_CLASSES_ROOT\*\shell\BeginningAndroid]
+@="Send to Beginning Android"
+"Icon"="\"%LOCALAPPDATA%\\BeginningAndroid\\beginning-android.exe\",0"
+
+[HKEY_CLASSES_ROOT\*\shell\BeginningAndroid\command]
+@="\"%LOCALAPPDATA%\\BeginningAndroid\\beginning-android.exe\" --send-file \"%1\""

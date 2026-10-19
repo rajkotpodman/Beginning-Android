@@ -1,0 +1,118 @@
+# ====================================================================
+# Beginning Android - Multi-Platform .gitignore
+# Covering: Android (Gradle), Go, Rust, Python, Windows, Linux, IDEs
+# ====================================================================
+
+# OS-Specific Files
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# macOS (if someone opens repo on mac)
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE & Editors
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+
+# Android & Gradle
+.gradle/
+build/
+app/build/
+*/build/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+output.json
+
+# Android Studio Navigation editor temp files
+.navigation/
+
+# Log files
+*.log
+
+# Keystore / Secrets
+*.jks
+*.keystore
+signing.properties
+
+# Go
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# Rust (if core/crypto crates used)
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Python (relay/tooling)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Secrets & Environment variables
+.env
+.env.local
+*.pem
+*.key
+*.cert

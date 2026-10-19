@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Beginning Android</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="action_scan_qr">Pair New PC</string>
+</resources>
