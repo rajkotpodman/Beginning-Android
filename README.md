@@ -194,20 +194,48 @@ docker run -p 8080:8080 -e PORT=8080 beginning-android-server
 - `STALE_TIMEOUT`: Stale room cleanup timeout in seconds (Default: `300`)
 
 
-### 2. Building the Desktop Client (Windows / Linux)
+### 2. Building & Installing the Desktop Client (Windows / Linux)
+
+The Desktop client is a lightweight, single-binary application with system tray integration and zero GUI bloat.
+
+#### Building Binaries (<10 MB each):
 ```bash
 cd desktop
 
-# Build for current OS
-go build -o beginning-android cmd/beginning-android/main.go
+# Using bash (Linux or Git Bash on Windows):
+bash build.sh
 
-# Cross-compile for Linux (from Windows):
-# $env:GOOS="linux"; $env:GOARCH="amd64"; go build -o bin/beginning-android-linux cmd/beginning-android/main.go
-
-# Install context menu entry:
-# Windows: Double-click scripts/install-windows-context-menu.reg
-# Linux: bash scripts/install-linux-context-menu.sh
+# Or using PowerShell on Windows:
+.\build.ps1
 ```
+This produces:
+- `bin/beginning-android-windows-amd64.exe` (~4.8 MB)
+- `bin/beginning-android-linux-amd64` (~6.2 MB)
+
+#### Context Menu & CLI Installation:
+- **Windows**: Right-click context menu "Send to Beginning Android" + PATH registration:
+  ```powershell
+  cd desktop
+  powershell -ExecutionPolicy Bypass -File .\install.ps1
+  ```
+- **Linux**: Nautilus, KDE Dolphin, and desktop context menu integration:
+  ```bash
+  cd desktop
+  bash install.sh
+  ```
+
+#### CLI Commands:
+```bash
+# Run system tray background sync (default)
+beginning-android
+
+# Pair device via CLI (updates ~/.beginningandroid/config.json)
+beginning-android pair apple-bravo-charlie-delta-echo-foxtrot
+
+# Direct file send (used by file manager right-click & CLI)
+beginning-android send /path/to/my_file.pdf
+```
+
 
 ### 3. Building the Android Client
 ```bash
