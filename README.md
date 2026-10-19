@@ -162,17 +162,37 @@ beginning-android/
 - **Android**: Android Studio Hedgehog+ / JDK 17+.
 - **Relay**: Go or Docker.
 
-### 1. Running the Relay Server
-```bash
-# Clone the repository
-git clone https://github.com/rajkotpodman/Beginning-Android.git
-cd Beginning-Android/relay
+### 1. Running the Relay Server (`/server/`)
 
-# Run locally
-go run cmd/relay-server/main.go
-# Or build Docker image
-docker build -t beginning-android-relay .
+The relay server is an ultra-lightweight, blind WebSocket forwarder that connects paired devices into rooms using their shared pairing key with zero knowledge of content.
+
+#### Option A: Direct with Python (Fastest)
+```bash
+cd server
+pip install -r requirements.txt
+
+# Run server (default on port 8080)
+python server.py
+
+# Or configure with custom port & TLS
+PORT=8443 TLS_CERT=/path/to/cert.pem TLS_KEY=/path/to/key.pem python server.py
 ```
+
+#### Option B: Docker Container
+```bash
+cd server
+# Build and run the minimal container
+docker build -t beginning-android-server .
+docker run -p 8080:8080 -e PORT=8080 beginning-android-server
+```
+
+#### Configuration Environment Variables:
+- `PORT`: HTTP / WebSocket listening port (Default: `8080`)
+- `HOST`: Bind address (Default: `0.0.0.0`)
+- `TLS_CERT`: Path to SSL/TLS certificate file (Optional)
+- `TLS_KEY`: Path to SSL/TLS private key file (Optional)
+- `STALE_TIMEOUT`: Stale room cleanup timeout in seconds (Default: `300`)
+
 
 ### 2. Building the Desktop Client (Windows / Linux)
 ```bash
