@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.BeginningAndroid" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#0D9488</item>
+        <item name="colorPrimaryVariant">#0F766E</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#38BDF8</item>
+        <item name="colorSecondaryVariant">#0284C7</item>
+        <item name="colorOnSecondary">#000000</item>
+        <item name="android:statusBarColor">#0F766E</item>
+    </style>
+</resources>

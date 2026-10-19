@@ -1,6 +1,24 @@
 <resources>
     <string name="app_name">Beginning Android</string>
+    <string name="title_pairing">Pair Device</string>
+    <string name="desc_pairing">Enter the 6-word pair code from your PC, or generate one here to connect both devices securely.</string>
+    <string name="hint_pair_code">e.g. apple-bravo-charlie-delta-echo-foxtrot</string>
+    <string name="btn_generate">Generate New Code</string>
+    <string name="btn_connect">Connect Devices</string>
+    <string name="title_main">Beginning Android</string>
     <string name="status_connected">Connected</string>
+    <string name="status_connecting">Connecting...</string>
     <string name="status_disconnected">Disconnected</string>
-    <string name="action_scan_qr">Pair New PC</string>
+    <string name="connected_to_pc">Connected to: %1$s</string>
+    <string name="last_clipboard_title">Last Clipboard Text</string>
+    <string name="btn_copy_clipboard">Copy to Clipboard</string>
+    <string name="btn_voice_typing">🎙️ Live Voice Typing</string>
+    <string name="btn_disconnect">Disconnect / Re-Pair</string>
+    <string name="listening_speech">Listening... speak now in any language</string>
+    <string name="notification_channel_name">Beginning Android Sync</string>
+    <string name="notification_text">Beginning Android running - Live Sync Active</string>
+    <string name="toast_clipboard_copied">Copied to clipboard!</string>
+    <string name="toast_file_sending">Sending file to PC...</string>
+    <string name="toast_file_received">File received: %1$s</string>
+    <string name="default_relay_url">ws://10.0.2.2:8080/ws</string>
 </resources>
