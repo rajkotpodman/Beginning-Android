@@ -1,12 +1,30 @@
 # Beginning Android
 
-A ultra-minimal, high-performance, and end-to-end encrypted cross-platform clipboard synchronizer, screenshot auto-transfer utility, and direct file-sharing tool connecting **Android**, **Windows**, and **Linux**.
+[![GitHub Release](https://img.shields.io/github/v/release/rajkotpodman/Beginning-Android?color=blue&style=flat-square)](https://github.com/rajkotpodman/Beginning-Android/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/rajkotpodman/Beginning-Android/build.yml?branch=main&style=flat-square&label=CI%2FCD)](https://github.com/rajkotpodman/Beginning-Android/actions)
+[![Android APK](https://img.shields.io/badge/Android%20APK-2.13%20MB-brightgreen?style=flat-square&logo=android)](https://github.com/rajkotpodman/Beginning-Android/releases)
+[![Windows EXE](https://img.shields.io/badge/Windows%20EXE-5.88%20MB-blue?style=flat-square&logo=windows)](https://github.com/rajkotpodman/Beginning-Android/releases)
+[![Linux Bin](https://img.shields.io/badge/Linux%20Bin-7.35%20MB-orange?style=flat-square&logo=linux)](https://github.com/rajkotpodman/Beginning-Android/releases)
+[![E2EE](https://img.shields.io/badge/E2EE-X25519%20%2B%20AES--256--GCM-red?style=flat-square)](docs/PROTOCOL.md)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+
+An ultra-minimal, high-performance, and end-to-end encrypted cross-platform clipboard synchronizer, screenshot auto-transfer utility, and direct file-sharing tool connecting **Android**, **Windows**, and **Linux**.
+
+---
+
+## 📊 Binary Footprint & Platform Metrics
+
+| Platform | Target Artifact | Size Target | Actual Compiled Size | Runtime Dependencies |
+| :--- | :--- | :--- | :--- | :--- |
+| **Android** | `beginning-android-release.apk` | ~2.1 MB | **2.13 MB** | Android 8.0+ (Oreo) - Android 15 |
+| **Windows** | `beginning-android-windows-amd64.exe` | < 10 MB | **5.88 MB** | Zero (Standalone native binary) |
+| **Linux** | `beginning-android-linux-amd64` | < 10 MB | **7.35 MB** | Zero (X11 / Wayland native binary) |
 
 ---
 
 ## ⚡ Core Philosophy & Constraints
 
-- **Smallest Possible App Size**: Native Go single binary for PC (<15MB, zero external runtimes); lean Kotlin APK for Android without bloat.
+- **Smallest Possible App Size**: Native Go single binary for PC (<10 MB, zero external runtimes); lean Kotlin APK for Android (~2.1 MB).
 - **Shortest & Cleanest Code**: Minimalist architecture, no unnecessary frameworks, zero fluff.
 - **Fastest Performance**: Low-latency WebSocket streaming, instant 500ms debounced live clipboard synchronization, non-blocking I/O.
 - **Zero Cloud Storage & Privacy First**: Content is never stored in the cloud. The relay server is a blind forwarder.
@@ -194,25 +212,28 @@ docker run -p 8080:8080 -e PORT=8080 beginning-android-server
 - `STALE_TIMEOUT`: Stale room cleanup timeout in seconds (Default: `300`)
 
 
-### 2. Building & Installing the Desktop Client (Windows / Linux)
+### 2. Multi-Platform Root Build Automation
 
-The Desktop client is a lightweight, single-binary application with system tray integration and zero GUI bloat.
+To compile all targets (Android APK, Windows EXE, and Linux binary) into `dist/` with a single command:
 
-#### Building Binaries (<10 MB each):
-```bash
-cd desktop
-
-# Using bash (Linux or Git Bash on Windows):
-bash build.sh
-
-# Or using PowerShell on Windows:
-.\build.ps1
+#### On Windows (PowerShell):
+```powershell
+.\build-all.ps1
 ```
-This produces:
-- `bin/beginning-android-windows-amd64.exe` (~4.8 MB)
-- `bin/beginning-android-linux-amd64` (~6.2 MB)
 
-#### Context Menu & CLI Installation:
+#### On Linux / macOS (Bash):
+```bash
+bash build-all.sh
+```
+
+All compiled binaries are deposited into `dist/`:
+- `dist/beginning-android-release.apk` (**2.13 MB**)
+- `dist/beginning-android-windows-amd64.exe` (**5.88 MB**)
+- `dist/beginning-android-linux-amd64` (**7.35 MB**)
+
+---
+
+### 3. Installing Desktop Context Menus & CLI Integration
 - **Windows**: Right-click context menu "Send to Beginning Android" + PATH registration:
   ```powershell
   cd desktop

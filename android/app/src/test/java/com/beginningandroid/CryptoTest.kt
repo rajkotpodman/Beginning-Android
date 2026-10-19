@@ -18,6 +18,15 @@ class CryptoTest {
         assertEquals(32, seed1.size)
         assertArrayEquals(seed1, seed2)
         assertFalse(seed1.contentEquals(seed3))
+
+        // Cross-platform vector verification (matches Go implementation byte-for-byte)
+        val expectedSeedHex = "87527f6425b7012ff14a6c8e85c5a7430f3f3acdfe2ed28bd99c7d04ed22f4c1"
+        val actualSeedHex = seed1.joinToString("") { "%02x".format(it) }
+        assertEquals(expectedSeedHex, actualSeedHex)
+
+        val expectedHashHex = "a867a68f78ea440b4d222da476f3ea5aadeac260d72c0960b12fd2187f31aa01"
+        val actualHashHex = Crypto.pairCodeHash(code1).joinToString("") { "%02x".format(it) }
+        assertEquals(expectedHashHex, actualHashHex)
     }
 
     @Test

@@ -2,7 +2,31 @@
 
 The Beginning Android Relay Server is an ultra-lightweight, stateless, and blind WebSocket forwarder. It stores zero user data, maintains zero databases, and has zero knowledge of encryption keys or message content.
 
-Under peak load, memory consumption is **< 15 MB RAM**, making it effortlessly runnable on the smallest $4–$5/mo VPS or free container tier.
+Under peak load, memory consumption is **< 15 MB RAM**, making it effortlessly runnable on the smallest $4–$5/mo VPS, free container tier, or directly on your local Windows PC.
+
+---
+
+## 🏠 Option 0: Local PC / Offline Wi-Fi Hotspot (Zero Internet Required)
+
+Run the relay server directly on your Windows 10/11 machine to enable high-speed sync between your phone (e.g. Moto G64) and PC over mobile hotspot or local Wi-Fi:
+
+### 1. Launch via 1-Click Batch Runner
+Double-click `run-local-relay.bat` at the repository root, or run in PowerShell:
+```powershell
+python server/server.py
+```
+The server will start listening on `0.0.0.0:8080`.
+
+### 2. Identify Local IPv4 Address
+In PowerShell:
+```powershell
+(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" }).IPAddress
+```
+*(e.g., `10.26.96.105` when connected to your mobile hotspot)*.
+
+### 3. Connect Devices
+- **Desktop Client**: `ws://localhost:8080/ws`
+- **Android Phone**: `ws://10.26.96.105:8080/ws`
 
 ---
 

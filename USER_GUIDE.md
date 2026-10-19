@@ -154,22 +154,54 @@ Beginning Android is engineered under strict zero-knowledge principles:
 
 ---
 
-## 🌐 Self-Hosting the Relay Server
+---
 
-If you prefer using your own private relay instead of the default:
+## 🌐 Relay Server Deployment & Local Hotspot Setup
 
-```bash
-cd server
-pip install -r requirements.txt
-python server.py --port 8080
-```
+Beginning Android can run either over the public Internet or entirely offline on a local private network or mobile hotspot.
 
-Or run via Docker:
-```bash
-docker run -d -p 8080:8080 beginning-android-server
-```
+### A. Local Wi-Fi Hotspot Setup (Zero-Internet Operation)
+You can connect your phone directly to your PC without an active Internet connection (e.g. Android mobile hotspot or local Wi-Fi router).
 
-In the Android app settings or desktop config (`~/.beginningandroid/config.json`), set `relay_url` to `ws://your-server-ip:8080/ws`.
+1. **Start the Local Relay on Windows**:
+   - Double-click `run-local-relay.bat` in the repository root, or run:
+     ```powershell
+     python server/server.py
+     ```
+   - The relay server binds to `0.0.0.0:8080`.
+2. **Determine your PC's Local IP**:
+   - When connected via Wi-Fi adapter to your phone's hotspot (e.g. Moto G64), check your IPv4 address (`ipconfig` or `Get-NetIPAddress`).
+   - Example local IP: `10.26.96.105`.
+3. **Configure Desktop Client**:
+   - Launch `beginning-android` and set relay URL to:
+     ```text
+     ws://localhost:8080/ws
+     ```
+4. **Configure Android Device**:
+   - In the Android app, enter the server URL pointing to your PC:
+     ```text
+     ws://10.26.96.105:8080/ws
+     ```
+   - Enter your 6-word pair code on both devices.
+   - Sync works entirely within the local Wi-Fi link at high speed with zero mobile data consumption!
+
+---
+
+### B. Self-Hosting on Cloud VPS (Hetzner, Railway, Fly.io)
+
+For full remote operation across disparate networks with automated HTTPS/WSS:
+1. Refer to [RELAY_DEPLOY.md](file:///e:/begnnining%20android/RELAY_DEPLOY.md) for step-by-step deployment templates.
+2. Deploy the container using Docker:
+   ```bash
+   docker run -d -p 8080:8080 --name beginning-relay beginning-android-server
+   ```
+3. Set up free automatic TLS using Caddy:
+   ```caddyfile
+   relay.yourdomain.com {
+       reverse_proxy localhost:8080
+   }
+   ```
+4. Configure clients to use `wss://relay.yourdomain.com/ws`.
 
 ---
 

@@ -8,12 +8,27 @@ INSTALL_DIR="${HOME}/.local/bin"
 mkdir -p "${INSTALL_DIR}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_BIN="${SCRIPT_DIR}/bin/beginning-android-linux-amd64"
+POSSIBLE_BINS=(
+    "${SCRIPT_DIR}/bin/beginning-android-linux-amd64"
+    "${SCRIPT_DIR}/../dist/beginning-android-linux-amd64"
+    "${SCRIPT_DIR}/bin/beginning-android"
+    "${SCRIPT_DIR}/beginning-android"
+)
 
-if [ -f "${SOURCE_BIN}" ]; then
+SOURCE_BIN=""
+for b in "${POSSIBLE_BINS[@]}"; do
+    if [ -f "$b" ]; then
+        SOURCE_BIN="$b"
+        break
+    fi
+done
+
+if [ -n "${SOURCE_BIN}" ]; then
     cp "${SOURCE_BIN}" "${INSTALL_DIR}/beginning-android"
     chmod +x "${INSTALL_DIR}/beginning-android"
-    echo "[OK] Installed binary to ${INSTALL_DIR}/beginning-android"
+    echo "[OK] Installed binary from ${SOURCE_BIN} to ${INSTALL_DIR}/beginning-android"
+else
+    echo "[WARNING] Pre-built binary not found. Build it using build.sh or build-all.sh."
 fi
 
 # 1. Nautilus / Nemo / Caja File Manager Script

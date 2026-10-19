@@ -121,6 +121,9 @@ Files are sliced into chunks of maximum **64 KB** (65,536 bytes). Each chunk is 
 }
 ```
 
+#### Streaming Backpressure & Flow Control:
+To prevent socket buffer overflow, memory spikes, and packet congestion over wireless connections, the sender enforces a **5–10ms backpressure throttling delay** between successive chunk transmissions. This maintains steady throughput and smooth streaming without degrading device responsiveness.
+
 ### 5.3 Transfer Completion (`file_end`)
 ```json
 {

@@ -10,16 +10,26 @@ if (-not (Test-Path $InstallDir)) {
 
 # Locate binary
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$SourceBin = Join-Path $ScriptDir "bin\beginning-android-windows-amd64.exe"
-if (-not (Test-Path $SourceBin)) {
-    $SourceBin = Join-Path $ScriptDir "bin\beginning-android.exe"
+$PossibleBins = @(
+    (Join-Path $ScriptDir "bin\beginning-android-windows-amd64.exe"),
+    (Join-Path $ScriptDir "..\dist\beginning-android-windows-amd64.exe"),
+    (Join-Path $ScriptDir "bin\beginning-android.exe"),
+    (Join-Path $ScriptDir "beginning-android.exe")
+)
+
+$SourceBin = $null
+foreach ($bin in $PossibleBins) {
+    if (Test-Path $bin) {
+        $SourceBin = $bin
+        break
+    }
 }
 
-if (Test-Path $SourceBin) {
+if ($SourceBin) {
     Copy-Item -Path $SourceBin -Destination "$InstallDir\beginning-android.exe" -Force
-    Write-Host "[OK] Binary copied to: $InstallDir\beginning-android.exe" -ForegroundColor Green
+    Write-Host "[OK] Binary copied from $SourceBin to: $InstallDir\beginning-android.exe" -ForegroundColor Green
 } else {
-    Write-Host "[WARNING] Pre-built binary not found in bin\. Ensure you build it with build.sh or go build." -ForegroundColor Yellow
+    Write-Host "[WARNING] Pre-built binary not found. Build it with build.ps1 or build-all.ps1." -ForegroundColor Yellow
 }
 
 # 1. Register Context Menu in Current User Registry using reg.exe (Fast & reliable)

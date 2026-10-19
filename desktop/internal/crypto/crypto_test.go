@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -22,6 +23,16 @@ func TestPBKDF2DerivePairSeed(t *testing.T) {
 	}
 	if bytes.Equal(seed1, seed3) {
 		t.Errorf("Different pair codes must yield different seeds")
+	}
+
+	expectedSeedHex := "87527f6425b7012ff14a6c8e85c5a7430f3f3acdfe2ed28bd99c7d04ed22f4c1"
+	if fmt.Sprintf("%x", seed1) != expectedSeedHex {
+		t.Errorf("Expected seed hex %s, got %x", expectedSeedHex, seed1)
+	}
+
+	expectedHashHex := "a867a68f78ea440b4d222da476f3ea5aadeac260d72c0960b12fd2187f31aa01"
+	if fmt.Sprintf("%x", PairCodeHash(code1)) != expectedHashHex {
+		t.Errorf("Expected hash hex %s, got %x", expectedHashHex, PairCodeHash(code1))
 	}
 }
 
