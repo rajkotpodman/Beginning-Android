@@ -128,6 +128,7 @@ class RelayClient(
                     val peerPub = Base64.getDecoder().decode(peerPubBase64)
                     val sharedSecret = Crypto.computeSharedSecret(x25519KeyPair.first, peerPub)
                     sessionKey = Crypto.deriveSessionKey(sharedSecret, pairCodeHash)
+                    lastIncomingSeq = 0L
                     val peerName = json.optString("device_name", "Connected PC")
                     Log.i(tag, "E2EE Session Established via X25519 + HKDF-SHA256 with $peerName")
                     listener.onPeerConnected(peerName)
@@ -138,10 +139,13 @@ class RelayClient(
             // 2. Replay Protection: Check sequential message counter
             val seq = json.optLong("seq", 0L)
             if (seq > 0L && seq <= lastIncomingSeq) {
-                Log.w(tag, "Rejected replayed message with seq $seq <= $lastIncomingSeq")
-                return
-            }
-            if (seq > lastIncomingSeq) {
+                if (lastIncomingSeq > 5L && seq < 5L) {
+                    lastIncomingSeq = seq
+                } else {
+                    Log.w(tag, "Rejected replayed message with seq $seq <= $lastIncomingSeq")
+                    return
+                }
+            } else if (seq > lastIncomingSeq) {
                 lastIncomingSeq = seq
             }
 

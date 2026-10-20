@@ -239,7 +239,7 @@
                         android:backgroundTint="#0F172A" />
                 </LinearLayout>
 
-                <!-- Live Voice Typing Card (Prompt 3) -->
+                <!-- Live Voice Typing Card (Gemini Live Style) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -248,44 +248,90 @@
                     android:background="#1E293B"
                     android:padding="16dp">
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="🎙️ Live Voice Typing to PC"
-                        android:textColor="#F1F5F9"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🎙️ Live Gemini Voice to PC"
+                            android:textColor="#F1F5F9"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/badgeVoiceStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="READY"
+                            android:textColor="#94A3B8"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:paddingHorizontal="8dp"
+                            android:paddingVertical="3dp"
+                            android:background="#334155" />
+                    </LinearLayout>
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Speak in your language; streams live text directly into PC."
+                        android:text="Continuous speech-to-text with real-time Gemini wave visualizer."
                         android:textColor="#94A3B8"
                         android:textSize="12sp" />
+
+                    <!-- Gemini Wave Audio Graph Visualizer -->
+                    <com.beginningandroid.GeminiWaveVisualizerView
+                        android:id="@+id/geminiWaveVisualizer"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:layout_marginTop="10dp"
+                        android:background="#0A0F1D" />
 
                     <TextView
                         android:id="@+id/tvVoiceTranscription"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
+                        android:layout_marginTop="10dp"
                         android:background="#0F172A"
                         android:padding="12dp"
-                        android:text="Tap below and begin speaking..."
+                        android:text="Tap Start Voice Typing and speak continuously..."
                         android:textColor="#F8FAFC"
                         android:textSize="14sp"
-                        android:minLines="2" />
+                        android:lineSpacingExtra="2dp"
+                        android:minLines="3" />
 
-                    <Button
-                        android:id="@+id/btnVoiceTyping"
+                    <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
-                        android:layout_marginTop="10dp"
-                        android:text="@string/btn_voice_typing"
-                        android:textAllCaps="false"
-                        android:textStyle="bold"
-                        android:textColor="#FFFFFF"
-                        android:backgroundTint="#0284C7" />
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="10dp">
+
+                        <Button
+                            android:id="@+id/btnVoiceTyping"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:text="🎙️ Start Continuous Voice"
+                            android:textAllCaps="false"
+                            android:textStyle="bold"
+                            android:textColor="#FFFFFF"
+                            android:backgroundTint="#0284C7" />
+
+                        <Button
+                            android:id="@+id/btnClearVoice"
+                            android:layout_width="wrap_content"
+                            android:layout_height="48dp"
+                            android:layout_marginStart="8dp"
+                            android:text="Clear"
+                            android:textAllCaps="false"
+                            android:textColor="#94A3B8"
+                            android:backgroundTint="#0F172A" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- Disconnect Button -->

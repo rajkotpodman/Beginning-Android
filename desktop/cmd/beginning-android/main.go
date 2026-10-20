@@ -190,6 +190,21 @@ func runTrayApp() {
 
 	client := network.NewClient(cfg)
 
+	// Wire real-time live conversion events between network client and web dashboard
+	client.OnVoiceStream = func(peerName, text string) {
+		relayServer.BroadcastLiveVoice(peerName, text)
+	}
+	client.OnClipboardReceived = func(text string) {
+		relayServer.BroadcastLiveClipboard(text)
+	}
+	client.OnPeerConnect = func(peerName string) {
+		relayServer.SetConnectedPeer(peerName)
+	}
+	relayServer.OnSendClipboard = func(text string) {
+		clipboard.SetText(text)
+		client.SendClipboard(text)
+	}
+
 	// Start 300ms Clipboard Watcher
 	clipboard.StartWatcher(300*time.Millisecond, func(text string) {
 		log.Printf("[Clipboard] Outgoing text copied (%d chars), syncing to Android...", len(text))

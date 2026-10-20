@@ -47,7 +47,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLastClipboard: TextView
     private lateinit var btnCopyClipboard: Button
     private lateinit var tvVoiceTranscription: TextView
+    private lateinit var geminiWaveVisualizer: GeminiWaveVisualizerView
+    private lateinit var badgeVoiceStatus: TextView
     private lateinit var btnVoiceTyping: Button
+    private lateinit var btnClearVoice: Button
     private lateinit var btnDisconnect: Button
 
     private val discoveryManager by lazy { DiscoveryManager(this) }
@@ -55,6 +58,8 @@ class MainActivity : AppCompatActivity() {
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
+    private var accumulatedSpeechText: String = ""
+    private val speechRestartHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -141,8 +146,17 @@ class MainActivity : AppCompatActivity() {
         tvLastClipboard = findViewById(R.id.tvLastClipboard)
         btnCopyClipboard = findViewById(R.id.btnCopyClipboard)
         tvVoiceTranscription = findViewById(R.id.tvVoiceTranscription)
+        geminiWaveVisualizer = findViewById(R.id.geminiWaveVisualizer)
+        badgeVoiceStatus = findViewById(R.id.badgeVoiceStatus)
         btnVoiceTyping = findViewById(R.id.btnVoiceTyping)
+        btnClearVoice = findViewById(R.id.btnClearVoice)
         btnDisconnect = findViewById(R.id.btnDisconnect)
+
+        btnClearVoice.setOnClickListener {
+            accumulatedSpeechText = ""
+            tvVoiceTranscription.text = "Voice transcription cleared. Speak to continue..."
+            syncService?.sendVoiceStream("")
+        }
 
         btnAutoDetect.setOnClickListener {
             triggerAutoDiscovery()
@@ -238,6 +252,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // --- Live Voice Typing (Prompt 3) ---
+    // --- Live Continuous Voice Typing with Gemini Wave Visualizer ---
     private fun toggleVoiceTyping() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -259,64 +274,124 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        isListening = true
+        geminiWaveVisualizer.setActive(true)
+        badgeVoiceStatus.text = "LISTENING LIVE"
+        badgeVoiceStatus.setBackgroundColor(0xFF0D9488.toInt())
+        badgeVoiceStatus.setTextColor(0xFFFFFFFF.toInt())
+        btnVoiceTyping.text = "⏹️ Stop Voice Typing"
+        btnVoiceTyping.setBackgroundColor(0xFFDC2626.toInt())
+
+        initAndStartSpeechRecognizer()
+    }
+
+    private fun initAndStartSpeechRecognizer() {
+        if (!isListening) return
+
+        try {
+            speechRecognizer?.destroy()
+        } catch (_: Exception) {}
+
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra("android.speech.extra.DICTATION_MODE", true)
         }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
-                tvVoiceTranscription.text = getString(R.string.listening_speech)
+                if (isListening) {
+                    badgeVoiceStatus.text = "LISTENING LIVE"
+                    badgeVoiceStatus.setBackgroundColor(0xFF0D9488.toInt())
+                    geminiWaveVisualizer.setActive(true)
+                }
             }
 
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
+
+            override fun onRmsChanged(rmsdB: Float) {
+                geminiWaveVisualizer.setRms(rmsdB)
+            }
+
             override fun onBufferReceived(buffer: ByteArray?) {}
+
             override fun onEndOfSpeech() {
-                isListening = false
-                btnVoiceTyping.text = getString(R.string.btn_voice_typing)
+                if (isListening) {
+                    badgeVoiceStatus.text = "PROCESSING"
+                }
             }
 
             override fun onError(error: Int) {
-                isListening = false
-                btnVoiceTyping.text = getString(R.string.btn_voice_typing)
+                // In continuous mode, seamlessly restart on normal pauses/timeouts
+                if (isListening) {
+                    restartListeningWithDelay(150)
+                }
             }
 
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val spoken = matches?.firstOrNull() ?: ""
-                if (spoken.isNotBlank()) {
-                    tvVoiceTranscription.text = spoken
-                    syncService?.sendVoiceStream(spoken)
+                val finalPhrase = matches?.firstOrNull()?.trim() ?: ""
+                if (finalPhrase.isNotBlank()) {
+                    accumulatedSpeechText = if (accumulatedSpeechText.isBlank()) {
+                        finalPhrase
+                    } else {
+                        "$accumulatedSpeechText $finalPhrase"
+                    }
+                    tvVoiceTranscription.text = accumulatedSpeechText
+                    syncService?.sendVoiceStream(accumulatedSpeechText)
+                }
+
+                if (isListening) {
+                    restartListeningWithDelay(80)
                 }
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
                 val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                val spoken = partial?.firstOrNull() ?: ""
+                val spoken = partial?.firstOrNull()?.trim() ?: ""
                 if (spoken.isNotBlank()) {
-                    tvVoiceTranscription.text = spoken
-                    // Stream partial words live to PC!
-                    syncService?.sendVoiceStream(spoken)
+                    val full = if (accumulatedSpeechText.isBlank()) spoken else "$accumulatedSpeechText $spoken"
+                    tvVoiceTranscription.text = full
+                    syncService?.sendVoiceStream(full)
                 }
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
 
-        speechRecognizer?.startListening(intent)
-        isListening = true
-        btnVoiceTyping.text = "⏹️ Stop Voice Typing"
+        try {
+            speechRecognizer?.startListening(intent)
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "startListening error: ${e.message}")
+            if (isListening) restartListeningWithDelay(250)
+        }
+    }
+
+    private fun restartListeningWithDelay(delayMs: Long) {
+        speechRestartHandler.removeCallbacksAndMessages(null)
+        speechRestartHandler.postDelayed({
+            if (isListening) {
+                initAndStartSpeechRecognizer()
+            }
+        }, delayMs)
     }
 
     private fun stopListening() {
-        speechRecognizer?.stopListening()
-        speechRecognizer?.destroy()
-        speechRecognizer = null
         isListening = false
-        btnVoiceTyping.text = getString(R.string.btn_voice_typing)
+        speechRestartHandler.removeCallbacksAndMessages(null)
+        geminiWaveVisualizer.setActive(false)
+        badgeVoiceStatus.text = "READY"
+        badgeVoiceStatus.setBackgroundColor(0xFF334155.toInt())
+        btnVoiceTyping.text = "🎙️ Start Continuous Voice"
+        btnVoiceTyping.setBackgroundColor(0xFF0284C7.toInt())
+
+        try {
+            speechRecognizer?.stopListening()
+            speechRecognizer?.destroy()
+        } catch (_: Exception) {}
+        speechRecognizer = null
     }
 
     // --- Native Share Intent Handling ---

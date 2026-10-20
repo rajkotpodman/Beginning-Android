@@ -97,6 +97,15 @@ type Server struct {
 	udpConn    *net.UDPConn
 	stopChan   chan struct{}
 	mu         sync.Mutex
+
+	latestVoiceText string
+	latestVoicePeer string
+	latestVoiceTime int64
+	latestClipboard string
+	connectedPeer   string
+	sseClients      map[chan string]bool
+	sseMu           sync.Mutex
+	OnSendClipboard func(text string)
 }
 
 func NewServer(port int, pcName, pairCode, apkPath string) *Server {
@@ -104,12 +113,13 @@ func NewServer(port int, pcName, pairCode, apkPath string) *Server {
 		port = 8080
 	}
 	return &Server{
-		port:     port,
-		pcName:   pcName,
-		pairCode: pairCode,
-		apkPath:  apkPath,
-		manager:  NewRoomManager(),
-		stopChan: make(chan struct{}),
+		port:       port,
+		pcName:     pcName,
+		pairCode:   pairCode,
+		apkPath:    apkPath,
+		manager:    NewRoomManager(),
+		stopChan:   make(chan struct{}),
+		sseClients: make(map[chan string]bool),
 	}
 }
 
@@ -129,6 +139,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/apk", s.handleApkDownload)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/ws/", s.handleWebSocket)
+	mux.HandleFunc("/events", s.handleEvents)
+	mux.HandleFunc("/api/clipboard", s.handleApiClipboard)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -177,6 +189,151 @@ func (s *Server) Stop() {
 		s.udpConn.Close()
 	}
 	log.Printf("[Relay] Embedded Relay Server stopped.")
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	msgChan := make(chan string, 16)
+	s.sseMu.Lock()
+	s.sseClients[msgChan] = true
+	s.sseMu.Unlock()
+
+	defer func() {
+		s.sseMu.Lock()
+		delete(s.sseClients, msgChan)
+		close(msgChan)
+		s.sseMu.Unlock()
+	}()
+
+	// Push current initial state
+	s.mu.Lock()
+	peer := s.connectedPeer
+	vText := s.latestVoiceText
+	vPeer := s.latestVoicePeer
+	clip := s.latestClipboard
+	code := s.pairCode
+	s.mu.Unlock()
+
+	initObj := map[string]interface{}{
+		"type":           "init",
+		"connected_peer": peer,
+		"voice_text":     vText,
+		"voice_peer":     vPeer,
+		"clipboard":      clip,
+		"pair_code":      code,
+	}
+	if b, err := json.Marshal(initObj); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	notify := r.Context().Done()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-notify:
+			return
+		case <-ticker.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
+		case msg := <-msgChan:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) broadcastSSE(msg map[string]interface{}) {
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	payload := string(b)
+
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	for ch := range s.sseClients {
+		select {
+		case ch <- payload:
+		default:
+		}
+	}
+}
+
+func (s *Server) BroadcastLiveVoice(peerName, text string) {
+	s.mu.Lock()
+	s.latestVoicePeer = peerName
+	s.latestVoiceText = text
+	s.latestVoiceTime = time.Now().UnixMilli()
+	if peerName != "" {
+		s.connectedPeer = peerName
+	}
+	s.mu.Unlock()
+
+	s.broadcastSSE(map[string]interface{}{
+		"type":           "voice",
+		"peer":           peerName,
+		"text":           text,
+		"connected_peer": peerName,
+		"timestamp":      time.Now().UnixMilli(),
+	})
+}
+
+func (s *Server) BroadcastLiveClipboard(text string) {
+	s.mu.Lock()
+	s.latestClipboard = text
+	s.mu.Unlock()
+
+	s.broadcastSSE(map[string]interface{}{
+		"type":      "clipboard",
+		"text":      text,
+		"timestamp": time.Now().UnixMilli(),
+	})
+}
+
+func (s *Server) SetConnectedPeer(peerName string) {
+	s.mu.Lock()
+	s.connectedPeer = peerName
+	s.mu.Unlock()
+
+	s.broadcastSSE(map[string]interface{}{
+		"type":           "peer",
+		"connected_peer": peerName,
+	})
+}
+
+func (s *Server) handleApiClipboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid json", http.StatusBadRequest)
+		return
+	}
+
+	s.BroadcastLiveClipboard(req.Text)
+	if s.OnSendClipboard != nil {
+		s.OnSendClipboard(req.Text)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -244,6 +401,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	code := s.pairCode
+	peer := s.connectedPeer
 	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -258,6 +416,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"ws_url":             fmt.Sprintf("ws://%s:%d/ws", primaryIP, s.port),
 		"active_rooms":       rooms,
 		"active_connections": conns,
+		"connected_peer":     peer,
 	})
 }
 
@@ -299,27 +458,36 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	primaryIP := GetPrimaryLocalIP()
 	s.mu.Lock()
 	code := s.pairCode
+	peer := s.connectedPeer
+	voiceText := s.latestVoiceText
+	clipText := s.latestClipboard
 	s.mu.Unlock()
 
 	wsURL := fmt.Sprintf("ws://%s:%d/ws", primaryIP, s.port)
 	rooms, conns := s.manager.Stats()
 
 	data := struct {
-		PCName      string
-		PairCode    string
-		WsURL       string
-		PrimaryIP   string
-		Port        int
-		ActiveRooms int
-		ActiveConns int
+		PCName        string
+		PairCode      string
+		WsURL         string
+		PrimaryIP     string
+		Port          int
+		ActiveRooms   int
+		ActiveConns   int
+		ConnectedPeer string
+		VoiceText     string
+		ClipboardText string
 	}{
-		PCName:      s.pcName,
-		PairCode:    code,
-		WsURL:       wsURL,
-		PrimaryIP:   primaryIP,
-		Port:        s.port,
-		ActiveRooms: rooms,
-		ActiveConns: conns,
+		PCName:        s.pcName,
+		PairCode:      code,
+		WsURL:         wsURL,
+		PrimaryIP:     primaryIP,
+		Port:          s.port,
+		ActiveRooms:   rooms,
+		ActiveConns:   conns,
+		ConnectedPeer: peer,
+		VoiceText:     voiceText,
+		ClipboardText: clipText,
 	}
 
 	tmpl := template.Must(template.New("dashboard").Parse(dashboardHTML))
@@ -427,8 +595,6 @@ func GetAllLocalIPs() []string {
 
 func GetPrimaryLocalIP() string {
 	all := GetAllLocalIPs()
-	// Prioritize 10.x.x.x (typical mobile hotspot) or 192.168.x.x (home Wi-Fi)
-	// Exclude typical VMware / VirtualBox ranges (192.168.75.x, 192.168.93.x)
 	var bestIP string
 	for _, ip := range all {
 		if strings.HasPrefix(ip, "192.168.75.") || strings.HasPrefix(ip, "192.168.93.") {
@@ -457,15 +623,20 @@ const dashboardHTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Beginning Android - Pair Hub</title>
+<title>Beginning Android - Live Hub & Voice Conversion</title>
 <style>
   :root {
-    --bg: #0F172A;
+    --bg: #0B1120;
     --card: #1E293B;
+    --card-inner: #0F172A;
     --accent: #0D9488;
     --accent-hover: #14B8A6;
+    --gemini-cyan: #38BDF8;
+    --gemini-purple: #C084FC;
+    --gemini-indigo: #818CF8;
     --text: #F8FAFC;
     --muted: #94A3B8;
+    --border: rgba(255,255,255,0.08);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -474,116 +645,491 @@ const dashboardHTML = `<!DOCTYPE html>
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: flex-start;
     min-height: 100vh;
-    padding: 20px;
+    padding: 30px 16px 60px;
+  }
+  .container {
+    max-width: 680px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
   }
   .card {
     background: var(--card);
-    border-radius: 16px;
-    padding: 32px;
-    max-width: 520px;
-    width: 100%;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.4);
-    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px;
+    padding: 24px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    border: 1px solid var(--border);
   }
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 24px;
+    margin-bottom: 8px;
   }
   .badge {
     background: var(--accent);
     color: white;
     font-size: 11px;
     font-weight: 700;
-    padding: 4px 10px;
+    padding: 5px 12px;
     border-radius: 20px;
     letter-spacing: 0.5px;
     text-transform: uppercase;
   }
-  h1 { font-size: 22px; font-weight: 700; color: #fff; }
-  p.desc { font-size: 14px; color: var(--muted); margin-bottom: 24px; line-height: 1.5; }
-  .field {
-    background: rgba(15, 23, 42, 0.7);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-bottom: 16px;
+  .badge-live {
+    background: #0284C7;
+    animation: pulse 1.8s infinite;
   }
-  .label { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; letter-spacing: 0.5px; }
-  .value { font-size: 16px; font-weight: 600; font-family: monospace; color: #38BDF8; word-break: break-all; }
-  .btn {
-    display: inline-block;
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.6); }
+    70% { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+  }
+  h1 { font-size: 22px; font-weight: 800; color: #fff; letter-spacing: -0.3px; }
+  h2 { font-size: 17px; font-weight: 700; color: #fff; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  p.desc { font-size: 13px; color: var(--muted); margin-bottom: 16px; line-height: 1.5; }
+
+  /* Live Voice Card */
+  .voice-card {
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    background: linear-gradient(180deg, #162032 0%, #111827 100%);
+  }
+  .canvas-box {
     width: 100%;
-    text-align: center;
+    height: 70px;
+    border-radius: 12px;
+    background: #070B14;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(255,255,255,0.06);
+    margin-bottom: 12px;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .transcription-box {
+    background: var(--card-inner);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #F1F5F9;
+    min-height: 90px;
+    max-height: 220px;
+    overflow-y: auto;
+    word-break: break-word;
+    user-select: text;
+  }
+  .transcription-empty {
+    color: #64748B;
+    font-style: italic;
+  }
+  .voice-controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     background: var(--accent);
     color: #fff;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
-    padding: 14px;
+    padding: 11px 16px;
     border-radius: 10px;
     text-decoration: none;
     border: none;
     cursor: pointer;
-    transition: background 0.2s;
-    margin-top: 10px;
+    transition: all 0.2s;
   }
-  .btn:hover { background: var(--accent-hover); }
+  .btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  .btn-primary {
+    background: linear-gradient(135deg, #0284C7 0%, #0D9488 100%);
+    flex: 1;
+  }
   .btn-outline {
     background: transparent;
-    border: 1px solid var(--accent);
-    color: var(--accent-hover);
-    margin-top: 8px;
-  }
-  .btn-outline:hover { background: rgba(13, 148, 136, 0.15); }
-  .notice {
-    font-size: 12px;
+    border: 1px solid var(--border);
     color: var(--muted);
-    text-align: center;
-    margin-top: 20px;
-    line-height: 1.4;
   }
+  .btn-outline:hover {
+    background: rgba(255,255,255,0.05);
+    color: #fff;
+  }
+  .toast-banner {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: rgba(13, 148, 136, 0.15);
+    border: 1px solid rgba(13, 148, 136, 0.3);
+    border-radius: 8px;
+    font-size: 12px;
+    color: #5EEAD4;
+    line-height: 1.4;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Info Fields */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 580px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .field {
+    background: var(--card-inner);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .label { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; letter-spacing: 0.5px; }
+  .value { font-size: 14px; font-weight: 600; font-family: monospace; color: var(--gemini-cyan); word-break: break-all; }
+
+  /* Guide Step Box */
+  .guide-box {
+    background: var(--card-inner);
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid var(--border);
+  }
+  .guide-step {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #CBD5E1;
+  }
+  .guide-step:last-child { margin-bottom: 0; }
+  .step-num {
+    background: #334155;
+    color: #38BDF8;
+    font-weight: 700;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  /* Clipboard Input */
+  .clip-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .clip-input {
+    flex: 1;
+    background: var(--card-inner);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: #fff;
+    font-size: 14px;
+  }
+  .clip-input:focus { outline: none; border-color: var(--accent); }
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="header">
-    <h1>Beginning Android</h1>
-    <span class="badge">Relay Ready</span>
+
+<div class="container">
+  <!-- Card 1: Live Gemini Voice-to-Text on PC Screen -->
+  <div class="card voice-card">
+    <div class="header">
+      <h2>🎙️ Live Gemini Voice Conversion</h2>
+      <span class="badge badge-live" id="voiceStatusBadge">READY</span>
+    </div>
+    <p class="desc">
+      Speak on your phone. Spoken words convert and stream right here in real time with live Gemini wave graphs.
+    </p>
+
+    <!-- 60 FPS HTML5 Canvas Gemini Waveform Graph -->
+    <div class="canvas-box">
+      <canvas id="waveCanvas"></canvas>
+    </div>
+
+    <!-- Live Transcribed Text -->
+    <div class="transcription-box" id="transcriptionBox">
+      <span class="transcription-empty" id="placeholderText">
+        Tap "Start Continuous Voice" on your phone and speak. Your speech will stream live into this box...
+      </span>
+    </div>
+
+    <div class="voice-controls">
+      <button class="btn btn-primary" onclick="copySpokenText()">
+        📋 Copy Spoken Text to PC Clipboard
+      </button>
+      <button class="btn btn-outline" onclick="clearSpokenText()">
+        Clear
+      </button>
+    </div>
+
+    <div class="toast-banner">
+      <span>⚡</span>
+      <div>
+        <strong>Instant Windows Clipboard Sync:</strong> Any words spoken on phone are automatically placed on your PC clipboard. Press <code>Ctrl + V</code> in Notepad, Word, Chrome, WhatsApp, or any PC app to paste instantly!
+      </div>
+    </div>
   </div>
-  <p class="desc">PC and Android are ready to pair on your mobile hotspot or Wi-Fi network.</p>
 
-  <div class="field">
-    <div class="label">6-Word Pair Code</div>
-    <div class="value" id="pairCode">{{.PairCode}}</div>
+  <!-- Card 2: PC-Mobile Clipboard Bridge -->
+  <div class="card">
+    <div class="header">
+      <h2>📋 Real-Time Shared Clipboard</h2>
+      <span class="badge" style="background: #334155;" id="peerStatusBadge">
+        {{if .ConnectedPeer}}{{.ConnectedPeer}}{{else}}Waiting for Phone{{end}}
+      </span>
+    </div>
+    <p class="desc">300ms bi-directional clipboard sync between your Windows PC and Android phone.</p>
+
+    <div class="field" style="margin-bottom: 10px;">
+      <div class="label">Current Synced Text</div>
+      <div class="value" id="currentClipboard" style="color: #A7F3D0; font-family: sans-serif; font-weight: normal; font-size: 14px;">
+        {{if .ClipboardText}}{{.ClipboardText}}{{else}}No clipboard text synchronized yet{{end}}
+      </div>
+    </div>
+
+    <div class="clip-row">
+      <input type="text" id="pcTextInput" class="clip-input" placeholder="Type text to send to phone clipboard...">
+      <button class="btn" onclick="sendToPhoneClipboard()">📲 Send to Phone</button>
+    </div>
   </div>
 
-  <div class="field">
-    <div class="label">Relay Server URL</div>
-    <div class="value" id="relayUrl">{{.WsURL}}</div>
+  <!-- Card 3: Pair Info & APK Download -->
+  <div class="card">
+    <div class="header">
+      <h1>Beginning Android</h1>
+      <span class="badge">Relay Ready</span>
+    </div>
+    <p class="desc">Connection endpoints for your mobile hotspot / Wi-Fi.</p>
+
+    <div class="grid">
+      <div class="field">
+        <div class="label">6-Word Pair Code</div>
+        <div class="value" id="pairCode">{{.PairCode}}</div>
+      </div>
+      <div class="field">
+        <div class="label">Connected PC</div>
+        <div class="value" style="color: #A7F3D0;">{{.PCName}} ({{.PrimaryIP}})</div>
+      </div>
+    </div>
+
+    <div class="field" style="margin-bottom: 14px;">
+      <div class="label">Relay Server URL</div>
+      <div class="value" id="relayUrl">{{.WsURL}}</div>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <button class="btn btn-outline" style="flex: 1;" onclick="copyPairCode()">📋 Copy Pair Code</button>
+      <a class="btn" style="flex: 1; text-align: center;" href="/apk" download>📲 Download Android APK</a>
+    </div>
   </div>
 
-  <div class="field">
-    <div class="label">Connected PC</div>
-    <div class="value" style="color: #A7F3D0;">{{.PCName}} ({{.PrimaryIP}})</div>
-  </div>
-
-  <button class="btn" onclick="copyConfig()">📋 Copy Pair Code</button>
-  <a class="btn btn-outline" href="/apk" download>📲 Download Android APK to Phone</a>
-
-  <div class="notice">
-    Hotspot password: <code>9898048483</code><br>
-    Once connected, syncing remains live in background continuously.
+  <!-- Card 4: How To Use Guide -->
+  <div class="card">
+    <h2>📖 How to Use Live Voice Conversion on PC</h2>
+    <div class="guide-box" style="margin-top: 12px;">
+      <div class="guide-step">
+        <span class="step-num">1</span>
+        <div><strong>Open Beginning Android on Phone:</strong> Confirm it shows <span style="color: #10B981; font-weight: bold;">Connected</span> in green.</div>
+      </div>
+      <div class="guide-step">
+        <span class="step-num">2</span>
+        <div><strong>Tap "Start Continuous Voice":</strong> Speak naturally in any language for as long as you want without stopping.</div>
+      </div>
+      <div class="guide-step">
+        <span class="step-num">3</span>
+        <div><strong>Watch Live Conversion on PC:</strong> Words appear live on this screen in real time with active audio wave graphs.</div>
+      </div>
+      <div class="guide-step">
+        <span class="step-num">4</span>
+        <div><strong>Press Ctrl + V in any PC app:</strong> The spoken text is automatically copied to your Windows clipboard ready to paste anywhere!</div>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
-function copyConfig() {
+// --- Live Server-Sent Events (SSE) Stream ---
+let liveVoiceText = {{if .VoiceText}}{{.VoiceText}}{{else}}""{{end}};
+let isVoiceActive = false;
+let waveIntensity = 0.08;
+let lastSpeechTime = 0;
+
+const transcriptionBox = document.getElementById('transcriptionBox');
+const voiceStatusBadge = document.getElementById('voiceStatusBadge');
+const peerStatusBadge = document.getElementById('peerStatusBadge');
+const currentClipboard = document.getElementById('currentClipboard');
+
+function updateVoiceDisplay(text, peer) {
+  if (!text || text.trim() === "") return;
+  liveVoiceText = text;
+  transcriptionBox.innerHTML = '<span style="color:#F8FAFC; font-weight:500;">' + escapeHtml(text) + '</span>';
+  transcriptionBox.scrollTop = transcriptionBox.scrollHeight;
+  voiceStatusBadge.innerText = (peer ? peer : "PHONE") + " SPEAKING";
+  voiceStatusBadge.style.background = "#0D9488";
+  isVoiceActive = true;
+  waveIntensity = 0.75;
+  lastSpeechTime = Date.now();
+}
+
+function escapeHtml(str) {
+  return str.replace(/[&<>"']/g, function(m) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
+  });
+}
+
+function connectSSE() {
+  const evtSource = new EventSource('/events');
+  evtSource.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'init') {
+        if (data.connected_peer) {
+          peerStatusBadge.innerText = "🟢 " + data.connected_peer;
+          peerStatusBadge.style.background = "#0D9488";
+        }
+        if (data.voice_text) {
+          updateVoiceDisplay(data.voice_text, data.voice_peer);
+        }
+        if (data.clipboard) {
+          currentClipboard.innerText = data.clipboard;
+        }
+      } else if (data.type === 'voice') {
+        updateVoiceDisplay(data.text, data.peer);
+      } else if (data.type === 'clipboard') {
+        currentClipboard.innerText = data.text;
+      } else if (data.type === 'peer') {
+        peerStatusBadge.innerText = "🟢 " + data.connected_peer;
+        peerStatusBadge.style.background = "#0D9488";
+      }
+    } catch(err) {
+      console.error(err);
+    }
+  };
+  evtSource.onerror = function() {
+    evtSource.close();
+    setTimeout(connectSSE, 2000);
+  };
+}
+connectSSE();
+
+// --- 60 FPS HTML5 Canvas Gemini Waveform Visualizer ---
+const canvas = document.getElementById('waveCanvas');
+const ctx = canvas.getContext('2d');
+let phase = 0;
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * window.devicePixelRatio;
+  canvas.height = rect.height * window.devicePixelRatio;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function drawWave(ctx, w, h, centerY, amp, speed, freq, color, offset) {
+  ctx.beginPath();
+  ctx.lineWidth = 3 * window.devicePixelRatio;
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+
+  for (let x = 0; x <= w; x += 3) {
+    const normX = x / w;
+    const hann = Math.sin(Math.PI * normX);
+    const y = centerY + Math.sin(normX * Math.PI * freq + phase * speed + offset) * amp * hann;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function renderWaves() {
+  requestAnimationFrame(renderWaves);
+  if (!canvas.width || !canvas.height) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const centerY = h / 2;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Decay wave intensity smoothly
+  if (Date.now() - lastSpeechTime > 2000) {
+    waveIntensity += (0.08 - waveIntensity) * 0.05;
+    if (isVoiceActive && waveIntensity < 0.12) {
+      isVoiceActive = false;
+      voiceStatusBadge.innerText = "READY";
+      voiceStatusBadge.style.background = "#0284C7";
+    }
+  } else {
+    waveIntensity += (0.75 - waveIntensity) * 0.1;
+  }
+
+  phase += 0.04;
+  const maxAmp = (h * 0.4) * waveIntensity;
+
+  drawWave(ctx, w, h, centerY, maxAmp, 1.0, 3.5, '#38BDF8', 0);
+  drawWave(ctx, w, h, centerY, maxAmp * 0.8, 1.3, 4.2, '#C084FC', 1.2);
+  drawWave(ctx, w, h, centerY, maxAmp * 0.65, 0.8, 2.8, '#818CF8', 2.4);
+  drawWave(ctx, w, h, centerY, maxAmp * 0.5, 1.1, 5.0, '#14B8A6', 3.6);
+}
+renderWaves();
+
+// --- Interactive Actions ---
+function copySpokenText() {
+  if (!liveVoiceText || liveVoiceText.trim() === "") {
+    alert("No spoken text yet. Speak on your phone first!");
+    return;
+  }
+  navigator.clipboard.writeText(liveVoiceText).then(() => {
+    alert("✅ Spoken text copied to PC clipboard!");
+  });
+}
+
+function clearSpokenText() {
+  liveVoiceText = "";
+  transcriptionBox.innerHTML = '<span class="transcription-empty">Cleared. Speak on your phone to transcribe new text...</span>';
+}
+
+function copyPairCode() {
   const code = document.getElementById('pairCode').innerText.trim();
   navigator.clipboard.writeText(code).then(() => {
-    alert('Pair code copied: ' + code);
+    alert("Pair code copied: " + code);
+  });
+}
+
+function sendToPhoneClipboard() {
+  const input = document.getElementById('pcTextInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  fetch('/api/clipboard', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text })
+  }).then(res => res.json()).then(() => {
+    input.value = "";
+    currentClipboard.innerText = text;
+    alert("✅ Sent to phone clipboard!");
+  }).catch(err => {
+    alert("Error sending text: " + err);
   });
 }
 </script>

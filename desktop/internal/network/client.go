@@ -48,8 +48,10 @@ type Client struct {
 	isRunning   bool
 	currentFile *os.File
 
-	OnStatusChange func(status string)
-	OnPeerConnect  func(peerName string)
+	OnStatusChange      func(status string)
+	OnPeerConnect       func(peerName string)
+	OnVoiceStream       func(peerName, text string)
+	OnClipboardReceived func(text string)
 }
 
 func NewClient(cfg *config.Config) *Client {
@@ -221,6 +223,7 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 					sessionKey, err := crypto.DeriveSessionKey(sharedSecret, c.pairCodeHash)
 					if err == nil {
 						c.sessionKey = sessionKey
+						c.lastIncomingSeq = 0 // Reset counter on new session
 						log.Printf("[Crypto] E2EE Session Key Established with peer: %s (%s)", env.DeviceName, env.Platform)
 					}
 				}
@@ -228,6 +231,11 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 
 				if env.DeviceName != "" && c.OnPeerConnect != nil {
 					c.OnPeerConnect(env.DeviceName)
+				}
+
+				// If the announcement came from another device, reply with our public key so both sides have it
+				if env.DeviceName != c.cfg.PCName {
+					c.sendKeyExchange()
 				}
 			}
 		}
@@ -238,11 +246,18 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 	if env.Seq > 0 {
 		c.mu.Lock()
 		if env.Seq <= c.lastIncomingSeq {
-			c.mu.Unlock()
-			log.Printf("[Crypto] Warning: Dropping replayed packet with seq=%d <= last=%d", env.Seq, c.lastIncomingSeq)
-			return
+			// If counter jumped backwards (e.g. peer restarted app/session), resync without dropping
+			if c.lastIncomingSeq > 5 && env.Seq < 5 {
+				log.Printf("[Crypto] Peer counter reset detected (new seq=%d, last=%d). Resyncing counter.", env.Seq, c.lastIncomingSeq)
+				c.lastIncomingSeq = env.Seq
+			} else {
+				c.mu.Unlock()
+				log.Printf("[Crypto] Warning: Dropping replayed packet with seq=%d <= last=%d", env.Seq, c.lastIncomingSeq)
+				return
+			}
+		} else {
+			c.lastIncomingSeq = env.Seq
 		}
-		c.lastIncomingSeq = env.Seq
 		c.mu.Unlock()
 	}
 
@@ -266,6 +281,9 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 		if err == nil && text != "" {
 			log.Printf("[Clipboard] Received live text (%d chars)", len(text))
 			clipboard.SetText(text)
+			if c.OnClipboardReceived != nil {
+				c.OnClipboardReceived(text)
+			}
 		}
 
 	case "voice_stream":
@@ -273,6 +291,13 @@ func (c *Client) handleIncomingEnvelope(env *Envelope) {
 		if err == nil && text != "" {
 			log.Printf("[Voice] Live speech transcription: %s", text)
 			clipboard.SetText(text)
+			peer := env.DeviceName
+			if peer == "" {
+				peer = "Android Phone"
+			}
+			if c.OnVoiceStream != nil {
+				c.OnVoiceStream(peer, text)
+			}
 		}
 
 	case "screenshot", "screenshot_meta", "screenshot_start", "file_start":
